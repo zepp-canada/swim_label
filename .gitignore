@@ -1,0 +1,6 @@
+*.pyc
+.venv
+
+worst_sessions
+models
+data
