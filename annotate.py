@@ -268,7 +268,7 @@ class LabelGUI:
 
         # SCALED units for plotting + yaw; NaN for missing streams so we draw empty plots
         X_scaled, labels = get_session_data(
-            self.sessions[self.idx], fs=self.fs, add_gyro=True, scale=True, nan_for_missing=True
+            self.sessions[self.idx], fs=self.fs, add_gyro=True, scale=True, nan_for_missing=False
         )
 
         n = X_scaled.shape[0]
