@@ -25,7 +25,7 @@ except Exception:
 # project util for forward pass
 from utils import run_model
 
-DEFAULT_MODEL_PATH = os.path.join("models", "3class_new", "swim.pth")
+DEFAULT_MODEL_PATH = os.path.join("models", "swim.pth")
 
 
 # ---------- network ----------
