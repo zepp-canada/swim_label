@@ -19,6 +19,7 @@ Controls:
     ←/→     = move cursor by 1 sample
     ↑/↓     = prev/next session
     S       = save labels to '<session>/human_label.csv'
+    R       = reset labels to original
     P       = run model & overlay predictions
     Esc     = discard unsaved changes & reload session
   Text box (top-left): enter session ID & press Enter to jump
@@ -53,7 +54,7 @@ except Exception:
 
 # Local project helpers (already in your repo)
 from utils import get_orientation  # ← EXACT yaw math
-from data_io import get_session_data
+from data_io import get_session_data, load_original_labels
 import re
 from model_infer import (
     load_model,
@@ -201,6 +202,7 @@ class LabelGUI:
         self.yaw_cos = np.zeros(0, dtype=np.float32)
         self.yaw_sin = np.zeros(0, dtype=np.float32)
         self.labels = np.zeros(0, dtype=int)
+        self.orig_labels = None
 
         # prediction overlay
         self.pred_labels = None
@@ -210,6 +212,7 @@ class LabelGUI:
         self._bg_patches = []
         self._y_lims = {}
         self.label_line = None
+        self.orig_line = None
         self.pred_line = None
 
         self._build_ui()
@@ -279,6 +282,8 @@ class LabelGUI:
         self.gyro = X_scaled[:, 3:6] if n else np.zeros((0, 3), dtype=np.float32)
         self.mag = X_scaled[:, 6:9] if n else np.zeros((0, 3), dtype=np.float32)
 
+        self.orig_labels = load_original_labels(self.sessions[self.idx], n)
+
         # ---------- Yaw: EXACT math inside utils.get_orientation, plot cos/sin ----------
         if n == 0 or np.all(np.isnan(self.acc)) or np.all(np.isnan(self.mag)):
             self.yaw_cos = np.full(n, np.nan, dtype=np.float32)
@@ -297,6 +302,7 @@ class LabelGUI:
         self.label_line = None
         self.pred_line = None
         self.pred_labels = None
+        self.orig_line = None
 
         self._draw_all()
         self._update_mode_text()
@@ -317,6 +323,15 @@ class LabelGUI:
         pd.DataFrame(self.labels).to_csv(path, header=False, index=False)
         print(f"[save] {path}")
         self.changed = False
+
+    def _reset_labels(self):
+        if self.orig_labels is not None:
+            self.labels = self.orig_labels.copy()
+            self.changed = True
+            self._update_labels_plot()
+            print("[labels] reset to original.")
+        else:
+            print("[labels] no original labels found; nothing to reset.")
 
     # -------- Inference overlay --------
     def _ensure_model(self):
@@ -443,11 +458,22 @@ class LabelGUI:
         if self.pred_labels is not None and self.T:
             if self.pred_line is None:
                 self.pred_line = self.axs[4].step(
-                    self.time, self.pred_labels, where="post",
+                    self.time, self.pred_labels+0.3, where="post",
                     linewidth=1.5, color="#ff7f0e", alpha=0.9, label="Prediction"
                 )[0]
             else:
                 self.pred_line.set_data(self.time, self.pred_labels)
+
+        # Original labels overlay (read-only)
+        if self.orig_labels is not None and self.T:
+            if self.orig_line is None:
+                self.orig_line = self.axs[4].step(
+                    self.time, self.orig_labels-0.3, where="post",
+                    linewidth=1.1, color="#54ed0d", alpha=0.9,
+                    label="Original"
+                )[0]
+            else:
+                self.orig_line.set_data(self.time, self.orig_labels)
 
         self.axs[4].set_yticks([0, 1, 2, 3], labels=list(CLASS_NAMES.values()))
         self.axs[4].set_ylim(-0.5, 3.5)
@@ -480,7 +506,7 @@ class LabelGUI:
             return
         if self.pred_line is None:
             self.pred_line = self.axs[4].step(
-                self.time, self.pred_labels, where="post",
+                self.time, self.pred_labels+0.3, where="post",
                 linewidth=1.5, color="#ff7f0e", alpha=0.9, label="Prediction"
             )[0]
         else:
@@ -575,6 +601,8 @@ class LabelGUI:
             self._save_labels()
         elif event.key == "p":
             self._run_inference_on_current()
+        elif event.key == "r":
+            self._reset_labels()
         elif event.key == "escape":
             print("[reload] Discarding changes.")
             self._load_session(self.idx)
@@ -597,16 +625,17 @@ class LabelGUI:
 # ---------------------- Run ----------------------
 
 if __name__ == "__main__":
-    FILTER_SESSIONS = [
-        '01_20230520071311(P25_backstoke_Lap8)',
-        '01_20230520071324(P25_backstoke_Lap8)',
-        '01_20230520071849(P25_breaststoke_Lap8)',
-        '01_20230520071903(P25_breaststoke_Lap8)',
-        '01_20230520072454(P25_Freestyle_Lap8)',
-        '01_20230520072502(P25_Freestyle_lap8)',
-        '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
-        '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
-        '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
-        '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
-    ]
+    # FILTER_SESSIONS = [
+    #     '01_20230520071311(P25_backstoke_Lap8)',
+    #     '01_20230520071324(P25_backstoke_Lap8)',
+    #     '01_20230520071849(P25_breaststoke_Lap8)',
+    #     '01_20230520071903(P25_breaststoke_Lap8)',
+    #     '01_20230520072454(P25_Freestyle_Lap8)',
+    #     '01_20230520072502(P25_Freestyle_lap8)',
+    #     '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
+    #     '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
+    #     '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
+    #     '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
+    # ]
+    FILTER_SESSIONS= None
     LabelGUI(DATA_ROOT, fs=FS, filter_sessions=FILTER_SESSIONS)

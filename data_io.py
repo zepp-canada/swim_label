@@ -17,6 +17,29 @@ import numpy as np
 import pandas as pd
 
 LABEL_CANDIDATES = ["human_label.csv", "new_swim_label.csv", "swim_label.csv", "label.csv"]
+ORIG_LABEL_CANDIDATES = [c for c in LABEL_CANDIDATES if c != "human_label.csv"]
+
+
+def load_original_labels(session_dir: str, n: int) -> Optional[np.ndarray]:
+    """Return original labels (not human_label.csv), padded/truncated to n."""
+    labels = None
+    for cand in ORIG_LABEL_CANDIDATES:
+        lp = os.path.join(session_dir, cand)
+        if os.path.exists(lp):
+            try:
+                # non-human files are typically "target" column with 1 header row
+                lbl = pd.read_csv(lp, skiprows=1, names=["target"])["target"].values
+                labels = lbl.astype(int)
+                labels[labels == -1] = 2  # map -1 → Turn
+                break
+            except Exception:
+                pass
+    if labels is None:
+        return None
+    y = np.zeros(n, dtype=int)
+    m = min(n, len(labels))
+    y[:m] = labels[:m]
+    return y
 
 
 def _read_xyz_csv(path: str) -> Optional[np.ndarray]:
