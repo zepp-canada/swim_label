@@ -7,12 +7,12 @@ What this does:
 - Computes yaw EXACTLY via utils.get_orientation (your reference math),
   then plots cos(yaw) and sin(yaw) in the yaw panel (range -1..1).
 - Lets you paint labels with the mouse/keys and save to human_label.csv.
-- Press 'p' to run the model (models/3class_new/swim.pth) on RAW counts
-  and overlay predictions on the labels plot.
+- Runs model predictions by default on session load (RAW counts),
+  and you can toggle visibility with 'p'.
 
 Controls:
   Mouse hover: vertical cursor across plots
-  Click: first click=start, second=end → fills span with current label
+  Right-click: first click=start, second=end → fills span with current label
   Scroll: X-axis zoom around mouse
   Keys:
     0,1,2,3 = Rest/Swim/Turn/Dolphin
@@ -20,7 +20,7 @@ Controls:
     ↑/↓     = prev/next session
     S       = save labels to '<session>/human_label.csv'
     R       = reset labels to original
-    P       = run model & overlay predictions
+    P       = toggle model prediction overlay
     Esc     = discard unsaved changes & reload session
   Text box (top-left): enter session ID & press Enter to jump
 """
@@ -43,10 +43,14 @@ for _bk in ("QtAgg", "MacOSX", "TkAgg"):
         break
     except Exception as _e:
         print(f"[ui] Backend {_bk} unavailable: {_e}")
+
+# Disable default 's' = save-figure key so our save labels doesn't open a dialog
+matplotlib.rcParams['keymap.save'] = []
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import TextBox
 
-# Torch is optional; only needed when pressing 'p'
+# Torch is optional; only needed for predictions
 try:
     import torch  # noqa: F401
 except Exception:
@@ -55,7 +59,6 @@ except Exception:
 # Local project helpers (already in your repo)
 from utils import get_orientation  # ← EXACT yaw math
 from data_io import get_session_data, load_original_labels
-import re
 from model_infer import (
     load_model,
     predict_arrays_argmax,
@@ -65,10 +68,13 @@ from model_infer import (
 
 # ---------------------- Config ----------------------
 
-DATA_ROOT = "data/csv/all_train_clean"
+DATA_ROOT = "examples 1"
 FS = 25.0
 SCROLL_ZOOM_FACTOR = 1.2
 HUMAN_LABEL_FILE = "human_label.csv"
+
+# Auto-merge tiny REST gaps after mouse labeling
+MIN_REST_SECONDS = 0.4  # gaps shorter than this are filled with the longer neighbor label
 
 CLASS_NAMES = {0: "Rest", 1: "Swim", 2: "Turn", 3: "Dolphin"}
 CLASS_COLORS = {0: "#999999", 1: "#1f77b4", 2: "#d62728", 3: "#2ca02c"}
@@ -176,12 +182,13 @@ class LabelGUI:
         self.data_root = data_root
         self.fs = fs
         self.model_path = model_path
+        self.min_rest_samples = max(1, int(round(MIN_REST_SECONDS * self.fs)))
 
         all_files = glob(os.path.join(data_root, "*"))
         if filter_sessions:
             all_files = [p for p in all_files if os.path.basename(p) in filter_sessions]
 
-        self.sessions = sorted([p for p in all_files if os.path.isdir(p)]) 
+        self.sessions = sorted([p for p in all_files if os.path.isdir(p)])
         if not self.sessions:
             raise RuntimeError(f"No session folders found under {data_root}")
         self.N = len(self.sessions)
@@ -204,9 +211,10 @@ class LabelGUI:
         self.labels = np.zeros(0, dtype=int)
         self.orig_labels = None
 
-        # prediction overlay
+        # predictions
         self.pred_labels = None
         self.model = None
+        self.show_pred = True  # toggle with 'p'
 
         # plotting
         self._bg_patches = []
@@ -284,7 +292,7 @@ class LabelGUI:
 
         self.orig_labels = load_original_labels(self.sessions[self.idx], n)
 
-        # ---------- Yaw: EXACT math inside utils.get_orientation, plot cos/sin ----------
+        # ---------- Yaw ----------
         if n == 0 or np.all(np.isnan(self.acc)) or np.all(np.isnan(self.mag)):
             self.yaw_cos = np.full(n, np.nan, dtype=np.float32)
             self.yaw_sin = np.full(n, np.nan, dtype=np.float32)
@@ -318,6 +326,11 @@ class LabelGUI:
         self.axs[3].set_ylim(*self._y_lims[self.axs[3]])
         self.axs[4].set_ylim(*self._y_lims[self.axs[4]])
 
+        # --- Run predictions by default; 'p' will toggle visibility ---
+        self._run_inference_on_current()
+        self.show_pred = True
+        self._apply_pred_visibility()
+
     def _save_labels(self):
         path = self._human_label_path(self.idx)
         pd.DataFrame(self.labels).to_csv(path, header=False, index=False)
@@ -338,7 +351,7 @@ class LabelGUI:
         if self.model is not None:
             return
         if torch is None:
-            print("[inference] PyTorch not available; install torch to use 'p'.")
+            print("[inference] PyTorch not available; install torch to show predictions.")
             return
         self.model, num_classes = load_model(self.model_path)
         print(f"[inference] Loaded model ({num_classes} classes).")
@@ -377,7 +390,21 @@ class LabelGUI:
         print("[inference] Overlay ready.")
         self._update_pred_plot()
 
-    # -------- Highlights --------
+    def _apply_pred_visibility(self):
+        if self.pred_labels is None or not self.T:
+            return
+        if self.pred_line is None:
+            # create if missing (visible state controlled below)
+            self.pred_line = self.axs[4].step(
+                self.time, self.pred_labels+0.3, where="post",
+                linewidth=1.5, color="#ff7f0e", alpha=0.9, label="Prediction"
+            )[0]
+        self.pred_line.set_visible(self.show_pred)
+        # Refresh legend to reflect visibility
+        self.axs[4].legend(loc="upper left")
+        self.fig.canvas.draw_idle()
+
+    # -------- Auto-merge short REST gaps --------
     @staticmethod
     def _label_spans(y: np.ndarray):
         if len(y) == 0:
@@ -393,6 +420,52 @@ class LabelGUI:
         spans.append((s, len(y) - 1, cur))
         return spans
 
+    def _merge_short_rests_once(self) -> bool:
+        """Single pass: merge REST (0) spans shorter than threshold into the longer neighbor.
+        Returns True if any change was made."""
+        if self.labels.size == 0:
+            return False
+        changed = False
+        spans = self._label_spans(self.labels)
+        for idx, (i0, i1, lab) in enumerate(spans):
+            if lab != 0:
+                continue
+            length = i1 - i0 + 1
+            if length >= self.min_rest_samples:
+                continue
+
+            left = spans[idx - 1] if idx - 1 >= 0 else None
+            right = spans[idx + 1] if idx + 1 < len(spans) else None
+
+            # Choose neighbor with longer duration; tie → prefer left
+            choose = None
+            if left is not None and right is not None:
+                llen = left[1] - left[0] + 1
+                rlen = right[1] - right[0] + 1
+                choose = left if llen >= rlen else right
+            elif left is not None:
+                choose = left
+            elif right is not None:
+                choose = right
+
+            if choose is None:
+                continue  # isolated tiny rest with no neighbors
+
+            _, _, neighbor_lab = choose
+            if neighbor_lab == 0:
+                continue  # nothing to merge into
+
+            self.labels[i0:i1+1] = int(neighbor_lab)
+            changed = True
+        return changed
+
+    def _merge_short_rests(self):
+        # Do a few passes in case adjacent merges enable further merges
+        for _ in range(3):
+            if not self._merge_short_rests_once():
+                break
+
+    # -------- Highlights --------
     def _clear_highlights(self):
         for art in self._bg_patches:
             try:
@@ -454,7 +527,7 @@ class LabelGUI:
         else:
             self.label_line.set_data(self.time, self.labels)
 
-        # Predictions overlay
+        # Predictions overlay (created/updated on-demand; visibility toggled by self.show_pred)
         if self.pred_labels is not None and self.T:
             if self.pred_line is None:
                 self.pred_line = self.axs[4].step(
@@ -463,6 +536,7 @@ class LabelGUI:
                 )[0]
             else:
                 self.pred_line.set_data(self.time, self.pred_labels)
+            self.pred_line.set_visible(self.show_pred)
 
         # Original labels overlay (read-only)
         if self.orig_labels is not None and self.T:
@@ -511,6 +585,7 @@ class LabelGUI:
             )[0]
         else:
             self.pred_line.set_data(self.time, self.pred_labels)
+        self.pred_line.set_visible(self.show_pred)
         self.axs[4].legend(loc="upper left")
         self.fig.canvas.draw_idle()
 
@@ -572,18 +647,31 @@ class LabelGUI:
         self._clamp_y_limits()
 
     def _on_click(self, event):
-        if event.button != 1 or event.inaxes not in self.axs or event.xdata is None or not self.T:
+        """
+        Right-click labeling:
+        - First right-click sets the start
+        - Second right-click sets the end and fills the range with the current label
+        Works even if the toolbar is in zoom/pan mode.
+        """
+        # Use right mouse button only
+        if event.button != 3 or event.inaxes not in self.axs or event.xdata is None or not self.T:
             return
-        if self._toolbar_mode() != "":
-            return
+
         ix = int(round(event.xdata * self.fs))
         ix = int(np.clip(ix, 0, self.T - 1))
+
         if self.pending_start is None:
             self.pending_start = ix
         else:
             i0, i1 = min(self.pending_start, ix), max(self.pending_start, ix)
             self.labels[i0:i1 + 1] = self.current_mode
             self.pending_start = None
+            # --- auto-merge tiny Rest gaps after labeling ---
+            if self.min_rest_samples > 0:
+                before = self.labels.copy()
+                self._merge_short_rests()
+                if not np.array_equal(before, self.labels):
+                    print("[labels] merged tiny Rest gaps.")
             self.changed = True
             self._update_labels_plot()
 
@@ -600,7 +688,10 @@ class LabelGUI:
         elif event.key == "s":
             self._save_labels()
         elif event.key == "p":
-            self._run_inference_on_current()
+            # toggle visibility only
+            self.show_pred = not self.show_pred
+            self._apply_pred_visibility()
+            print(f"[inference] prediction overlay {'ON' if self.show_pred else 'OFF'}.")
         elif event.key == "r":
             self._reset_labels()
         elif event.key == "escape":
@@ -625,17 +716,17 @@ class LabelGUI:
 # ---------------------- Run ----------------------
 
 if __name__ == "__main__":
-    # FILTER_SESSIONS = [
-    #     '01_20230520071311(P25_backstoke_Lap8)',
-    #     '01_20230520071324(P25_backstoke_Lap8)',
-    #     '01_20230520071849(P25_breaststoke_Lap8)',
-    #     '01_20230520071903(P25_breaststoke_Lap8)',
-    #     '01_20230520072454(P25_Freestyle_Lap8)',
-    #     '01_20230520072502(P25_Freestyle_lap8)',
-    #     '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
-    #     '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
-    #     '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
-    #     '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
-    # ]
-    FILTER_SESSIONS= None
+    FILTER_SESSIONS = [
+        '01_20230520071311(P25_backstoke_Lap8)',
+        '01_20230520071324(P25_backstoke_Lap8)',
+        '01_20230520071849(P25_breaststoke_Lap8)',
+        '01_20230520071903(P25_breaststoke_Lap8)',
+        '01_20230520072454(P25_Freestyle_Lap8)',
+        '01_20230520072502(P25_Freestyle_lap8)',
+        '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
+        '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
+        '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
+        '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
+    ]
+    FILTER_SESSIONS = None
     LabelGUI(DATA_ROOT, fs=FS, filter_sessions=FILTER_SESSIONS)
