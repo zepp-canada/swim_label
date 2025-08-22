@@ -68,7 +68,7 @@ from model_infer import (
 
 # ---------------------- Config ----------------------
 
-DATA_ROOT = "examples 1"
+DATA_ROOT = "data/all_train_clean"
 FS = 25.0
 SCROLL_ZOOM_FACTOR = 1.2
 HUMAN_LABEL_FILE = "human_label.csv"
@@ -716,17 +716,17 @@ class LabelGUI:
 # ---------------------- Run ----------------------
 
 if __name__ == "__main__":
-    FILTER_SESSIONS = [
-        '01_20230520071311(P25_backstoke_Lap8)',
-        '01_20230520071324(P25_backstoke_Lap8)',
-        '01_20230520071849(P25_breaststoke_Lap8)',
-        '01_20230520071903(P25_breaststoke_Lap8)',
-        '01_20230520072454(P25_Freestyle_Lap8)',
-        '01_20230520072502(P25_Freestyle_lap8)',
-        '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
-        '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
-        '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
-        '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
-    ]
+    # FILTER_SESSIONS = [
+    #     '01_20230520071311(P25_backstoke_Lap8)',
+    #     '01_20230520071324(P25_backstoke_Lap8)',
+    #     '01_20230520071849(P25_breaststoke_Lap8)',
+    #     '01_20230520071903(P25_breaststoke_Lap8)',
+    #     '01_20230520072454(P25_Freestyle_Lap8)',
+    #     '01_20230520072502(P25_Freestyle_lap8)',
+    #     '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
+    #     '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
+    #     '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
+    #     '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
+    # ]
     FILTER_SESSIONS = None
     LabelGUI(DATA_ROOT, fs=FS, filter_sessions=FILTER_SESSIONS)

@@ -32,7 +32,7 @@ import random
 # =========================
 ROOT_DATA_DIR = Path("data/all_test_clean")  # root folder containing session subfolders
 OUTPUT_DIR    = Path("engineer_splits")      # where alex_original/, subhra_original/, arman_original/ will live
-ENGINEERS     = ["alex", "subhra", "arman"]  # order also used to distribute remainders
+ENGINEERS     = ["alex", "subhra", "arman", "Mohammad"]  # order also used to distribute remainders
 SEED          = 17                            # deterministic split
 USE_SYMLINKS  = True                          # if False, we copy (slower). Symlinks recommended.
 
@@ -51,14 +51,15 @@ def list_sessions(root: Path) -> List[Path]:
     return sessions
 
 
-def split_into_three(items: List[Path], names: List[str], seed: int) -> Dict[str, List[Path]]:
+def split_into_engineers(items: List[Path], names: List[str], seed: int) -> Dict[str, List[Path]]:
+    num_split = len(names)
     rnd = random.Random(seed)
     shuffled = items[:]
     rnd.shuffle(shuffled)
     n = len(shuffled)
-    base = n // 3
-    rem  = n % 3
-    sizes = [base + (1 if i < rem else 0) for i in range(3)]
+    base = n // num_split
+    rem  = n % num_split
+    sizes = [base + (1 if i < rem else 0) for i in range(num_split)]
 
     parts: Dict[str, List[Path]] = {}
     start = 0
@@ -126,7 +127,7 @@ def materialize_partitions(parts: Dict[str, List[Path]], out_root: Path):
 def main():
     try:
         sessions = list_sessions(ROOT_DATA_DIR)
-        parts = split_into_three(sessions, ENGINEERS, SEED)
+        parts = split_into_engineers(sessions, ENGINEERS, SEED)
         materialize_partitions(parts, OUTPUT_DIR)
 
         total = sum(len(v) for v in parts.values())
