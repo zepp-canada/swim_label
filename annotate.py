@@ -68,7 +68,7 @@ from model_infer import (
 
 # ---------------------- Config ----------------------
 
-DATA_ROOT = "data/all_train_clean"
+DATA_ROOT = "engineer_splits/subhra_original"
 FS = 25.0
 SCROLL_ZOOM_FACTOR = 1.2
 HUMAN_LABEL_FILE = "human_label.csv"

@@ -30,7 +30,7 @@ import random
 # =========================
 # Config (edit as needed)
 # =========================
-ROOT_DATA_DIR = Path("data/all_test_clean")  # root folder containing session subfolders
+ROOT_DATA_DIR = Path("data/all_train_clean")  # root folder containing session subfolders
 OUTPUT_DIR    = Path("engineer_splits")      # where alex_original/, subhra_original/, arman_original/ will live
 ENGINEERS     = ["alex", "subhra", "arman", "Mohammad"]  # order also used to distribute remainders
 SEED          = 17                            # deterministic split
