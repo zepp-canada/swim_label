@@ -218,6 +218,7 @@ class LabelGUI:
 
         # plotting
         self._bg_patches = []
+        self._diff_patches = []
         self._y_lims = {}
         self.label_line = None
         self.orig_line = None
@@ -467,15 +468,15 @@ class LabelGUI:
 
     # -------- Highlights --------
     def _clear_highlights(self):
-        for art in self._bg_patches:
+        for art in self._bg_patches + self._diff_patches:
             try:
                 art.remove()
             except Exception:
                 pass
         self._bg_patches = []
+        self._diff_patches = []
 
     def _draw_highlights(self):
-        self._clear_highlights()
         if self.T == 0:
             return
         for (i0, i1, lab) in self._label_spans(self.labels):
@@ -486,6 +487,49 @@ class LabelGUI:
             x1 = self.time[i1]
             for ax in self.axs[:4]:
                 self._bg_patches.append(ax.axvspan(x0, x1, facecolor=color, edgecolor="none"))
+
+    def _draw_differences(self):
+        """Overlay regions where current labels differ from original labels."""
+        if self.T == 0 or self.orig_labels is None:
+            return
+        diffs = self.labels != self.orig_labels
+        if not diffs.any():
+            return
+        # find contiguous spans of differences
+        in_span = False
+        start = 0
+        for i, d in enumerate(diffs):
+            if d and not in_span:
+                in_span = True
+                start = i
+            elif not d and in_span:
+                end = i - 1
+                x0, x1 = self.time[start], self.time[end]
+                for ax in self.axs[:4]:
+                    self._diff_patches.append(
+                        ax.axvspan(
+                            x0, x1,
+                            facecolor=(0.5, 0.0, 0.5, 0.25),   # strong purple overlay
+                            edgecolor=(0.3, 0.0, 0.3, 0.9),   # darker outline
+                            linewidth=1.2,
+                            zorder=5
+                        )
+                    )
+                in_span = False
+        if in_span:
+            end = len(diffs) - 1
+            x0, x1 = self.time[start], self.time[end]
+            for ax in self.axs[:4]:
+                self._diff_patches.append(
+                    ax.axvspan(
+                        x0, x1,
+                        facecolor=(0.5, 0.0, 0.5, 0.25),
+                        edgecolor=(0.3, 0.0, 0.3, 0.9),
+                        linewidth=1.2,
+                        zorder=5
+                    )
+                )
+
 
     # -------- Drawing --------
     def _draw_all(self):
@@ -527,7 +571,7 @@ class LabelGUI:
         else:
             self.label_line.set_data(self.time, self.labels)
 
-        # Predictions overlay (created/updated on-demand; visibility toggled by self.show_pred)
+        # Predictions overlay
         if self.pred_labels is not None and self.T:
             if self.pred_line is None:
                 self.pred_line = self.axs[4].step(
@@ -538,7 +582,7 @@ class LabelGUI:
                 self.pred_line.set_data(self.time, self.pred_labels)
             self.pred_line.set_visible(self.show_pred)
 
-        # Original labels overlay (read-only)
+        # Original labels overlay
         if self.orig_labels is not None and self.T:
             if self.orig_line is None:
                 self.orig_line = self.axs[4].step(
@@ -554,8 +598,12 @@ class LabelGUI:
         self.axs[4].set_xlabel("time (s)")
         self.axs[4].legend(loc="upper left")
 
+        # Highlights
+        self._clear_highlights()
         self._draw_highlights()
+        self._draw_differences()
 
+        # Cursor
         xcursor = self.time[self.cursor_ix] if self.T and 0 <= self.cursor_ix < self.T else 0.0
         self.vlines = [ax.axvline(xcursor, linestyle="--", alpha=0.6) for ax in self.axs]
         self.fig.suptitle(f"{self._session_name(self.idx)}  —  [{self.idx}/{self.N-1}]")
@@ -572,7 +620,10 @@ class LabelGUI:
     def _update_labels_plot(self):
         if self.label_line is not None:
             self.label_line.set_data(self.time, self.labels)
+        # redraw highlights including diffs
+        self._clear_highlights()
         self._draw_highlights()
+        self._draw_differences()
         self.fig.canvas.draw_idle()
 
     def _update_pred_plot(self):
@@ -716,17 +767,5 @@ class LabelGUI:
 # ---------------------- Run ----------------------
 
 if __name__ == "__main__":
-    # FILTER_SESSIONS = [
-    #     '01_20230520071311(P25_backstoke_Lap8)',
-    #     '01_20230520071324(P25_backstoke_Lap8)',
-    #     '01_20230520071849(P25_breaststoke_Lap8)',
-    #     '01_20230520071903(P25_breaststoke_Lap8)',
-    #     '01_20230520072454(P25_Freestyle_Lap8)',
-    #     '01_20230520072502(P25_Freestyle_lap8)',
-    #     '020_2021_09_17_19_34_L_ZF2B0418_freestroke_25',
-    #     '020_2021_09_17_19_49_L_ZF2B0418_butterfly_25',
-    #     '020_2021_09_17_19_34_R_19281942004107_freestroke_25',
-    #     '020_2022_03_08_18_46_L_E2130041_freestroke_25_lap10'
-    # ]
     FILTER_SESSIONS = None
     LabelGUI(DATA_ROOT, fs=FS, filter_sessions=FILTER_SESSIONS)
