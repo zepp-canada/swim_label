@@ -111,12 +111,12 @@ STROKES = ["free", "back", "breast", "fly"]
 IDX2STROKE = {0: "breast", 1: "free", 2: "back", 3: "fly"}
 
 STROKE_COLORS = {
-    "free":   "#1f77b4",  # blue
-    "back":   "#9467bd",  # purple
-    "breast": "#e377c2",  # pink
-    "fly":    "#17becf",  # teal
+    "free":   "#0072B2",  # bright blue
+    "back":   "#D55E00",  # strong orange
+    "breast": "#CC79A7",  # vivid magenta
+    "fly":    "#009E73",  # rich green
 }
-STROKE_BAND_ALPHA = 0.22  # shaded band alpha (bottom label panel only)
+STROKE_BAND_ALPHA = 0.35  # increase alpha so bands stand out more
 
 def _hex_to_rgba(hex_color: str, alpha: float = LABEL_ALPHA):
     hex_color = hex_color.lstrip("#")
@@ -213,7 +213,7 @@ def _load_human_labels_csv(path: str, n: int) -> tuple[np.ndarray, np.ndarray] |
     if not os.path.isfile(path):
         return None
     try:
-        ser = pd.read_csv(path, header=False).iloc[:, 0]
+        ser = pd.read_csv(path, header=None).iloc[:, 0]
     except Exception as e:
         print(f"[human] failed to read {path}: {e}")
         return None
@@ -584,7 +584,6 @@ class LabelGUI:
         sess = self._session_name(self.idx)
         print(f"[load] Session {self.idx}/{self.N-1}: {sess}")
 
-        # SCALED units for plotting + yaw; NaN for missing streams
         X_scaled, base_labels = get_session_data(
             self.sessions[self.idx], fs=self.fs, add_gyro=True, scale=True, nan_for_missing=False
         )
@@ -597,78 +596,45 @@ class LabelGUI:
         self.gyro = X_scaled[:, 3:6] if n else np.zeros((0, 3), dtype=np.float32)
         self.mag  = X_scaled[:, 6:9] if n else np.zeros((0, 3), dtype=np.float32)
 
-        # ---------- Yaw ----------
+        # Yaw
         if n == 0 or np.all(np.isnan(self.acc)) or np.all(np.isnan(self.mag)):
             self.yaw_cos = np.full(n, np.nan, dtype=np.float32)
             self.yaw_sin = np.full(n, np.nan, dtype=np.float32)
-            print("[yaw] skipped: missing/empty acc or mag streams.")
         else:
             self.yaw_cos, self.yaw_sin = _compute_yaw_cos_sin(self.acc, self.gyro, self.mag)
 
-        # Base labels (READ-ONLY) & strokes (editable)
+        # Base labels
         self.labels = base_labels if base_labels is not None else np.zeros(n, dtype=int)
         self.strokes = np.array([None] * n, dtype=object)
 
-        # If a human_label.csv exists, prefer it (mixed strings/ints) ONLY if we later toggle OFF predictions.
-        # (We still load predictions by default; 'P' can clear to blank.)
+        # --- PRIORITY: human labels if they exist ---
         human_path = self._human_label_path(self.idx)
         mixed = _load_human_labels_csv(human_path, n)
-        self._loaded_human_strokes = None
         if mixed is not None:
             base, prev_strokes = mixed
-            # Use disk base labels to match what's been saved historically.
             self.labels = base
-            self._loaded_human_strokes = prev_strokes  # kept only if user toggles off predictions
-
-        # Stroke model: run inference and set as DEFAULT strokes
-        self._ensure_model()
-        self.pred_strokes = None
-        self.show_pred = True  # default ON
-
-        if self.model is not None and self.model_dir is not None and self.T > 0:
-            try:
-                self._run_stroke_inference_on_current()
-                # Restrict predictions to Swim(1) only
-                self._apply_predictions_to_strokes()
-                print("[infer] Stroke predictions applied as default labels.")
-            except Exception as e:
-                print(f"[infer] Stroke inference failed: {e}")
-                # Fall back to loaded human strokes if present; otherwise blank slate
-                if self._loaded_human_strokes is not None:
-                    self.strokes = self._loaded_human_strokes
-                    self.show_pred = False
-                else:
-                    self.strokes[:] = None
-                    self.show_pred = False
+            self.strokes = prev_strokes
+            self.show_pred = False
+            print(f"[human] Loaded saved strokes from {human_path}")
         else:
-            # No model available -> use loaded human strokes if any; else blank slate
-            if self._loaded_human_strokes is not None:
-                self.strokes = self._loaded_human_strokes
-                self.show_pred = False
-                print("[infer] Model unavailable; using previously saved strokes.")
+            # Otherwise, run model inference
+            self._ensure_model()
+            if self.model is not None and self.T > 0:
+                self._run_stroke_inference_on_current()
+                self._apply_predictions_to_strokes()
+                self.show_pred = True
+                print("[infer] Applied model predictions (no human labels).")
             else:
                 self.strokes[:] = None
                 self.show_pred = False
-                print("[infer] Model unavailable; starting from blank slate.")
+                print("[infer] No model available; blank slate.")
 
-        # Reset misc state
         self.pending_start = None
         self.cursor_ix = 0
         self.changed = False
 
         self._draw_all()
         self._update_mode_text()
-
-        # fix Y-lims for x-only navigation
-        self._y_lims = {
-            self.axs[0]: self.axs[0].get_ylim(),
-            self.axs[1]: self.axs[1].get_ylim(),
-            self.axs[2]: self.axs[2].get_ylim(),
-            self.axs[3]: (-1.05, 1.05),
-            self.axs[4]: (0.0, 1.0),   # stroke bands only
-        }
-        self.axs[3].set_ylim(*self._y_lims[self.axs[3]])
-        self.axs[4].set_ylim(*self._y_lims[self.axs[4]])
 
     def _run_stroke_inference_on_current(self):
         if self.model is None or self.model_params is None or self.model_stats is None:
