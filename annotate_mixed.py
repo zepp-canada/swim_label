@@ -639,13 +639,15 @@ class LabelGUI:
     def _run_stroke_inference_on_current(self):
         if self.model is None or self.model_params is None or self.model_stats is None:
             return
+
         add_gyro   = bool(self.model_params.get("add_gyro", False))
         scale_data = bool(self.model_params.get("scale_data", False))
         fs         = int(self.model_params.get("fs", 25))
         front_s    = float(self.model_params.get("front_window_s", 3))
         stride_s   = float(self.model_params.get("stride_s", 5))
+
         # Choose a conservative back_window: use the MAX from back_schedule if available
-        back_s     = None
+        back_s = None
         try:
             bs = self.model_params.get("back_schedule", [])
             if isinstance(bs, list) and bs:
@@ -657,41 +659,59 @@ class LabelGUI:
         stride_win = int(round(stride_s * fs))
         back_win   = int(round(back_s * fs)) if back_s is not None else None
 
+        # Load raw counts for inference
         X = _load_session_counts_for_infer(self.sessions[self.idx], add_gyro=add_gyro)
-        if X is None or X.shape[0] != self.T:
-            # If lengths mismatch, clip to min length for predictions, then pad None
-            if X is None:
-                raise RuntimeError("No input data for stroke inference.")
-            Tm = min(len(X), self.T)
-            if Tm <= 0:
-                raise RuntimeError("Empty input for stroke inference.")
-            y_idx = _stroke_inference(self.model, X[:Tm], self.model_stats,
-                                      stride_window=stride_win, front_window=front_win,
-                                      back_window=back_win, scale_data=scale_data)
-            # Map idx to stroke string (for the predicted region)
-            y_str = np.array([IDX2STROKE.get(int(k), None) for k in y_idx], dtype=object)
-            # Build full-length array
-            y_full = np.array([None]*self.T, dtype=object)
-            y_full[:Tm] = y_str
-            self.pred_strokes = y_full
-        else:
-            y_idx = _stroke_inference(self.model, X, self.model_stats,
-                                      stride_window=stride_win, front_window=front_win,
-                                      back_window=back_win, scale_data=scale_data)
-            self.pred_strokes = np.array([IDX2STROKE.get(int(k), None) for k in y_idx], dtype=object)
+        if X is None:
+            raise RuntimeError("No input data for stroke inference.")
+
+        Tm = min(len(X), self.T)
+        if Tm <= 0:
+            raise RuntimeError("Empty input for stroke inference.")
+
+        # Run inference only on the overlapping portion
+        y_idx = _stroke_inference(
+            self.model,
+            X[:Tm],
+            self.model_stats,
+            stride_window=stride_win,
+            front_window=front_win,
+            back_window=back_win,
+            scale_data=scale_data,
+        )
+
+        # Map to stroke strings
+        y_str = np.array([IDX2STROKE.get(int(k), None) for k in y_idx], dtype=object)
+
+        # Build full-length array aligned to self.T
+        y_full = np.array([None] * self.T, dtype=object)
+        y_full[:Tm] = y_str
+        self.pred_strokes = y_full
 
     def _apply_predictions_to_strokes(self):
         """Copy pred_strokes into self.strokes where base==Swim; else None."""
         if self.pred_strokes is None or self.T == 0:
             self.strokes[:] = None
             return
-        swim = (self.labels == 1)
-        out = np.array([None]*self.T, dtype=object)
+
         ps = self.pred_strokes
+
+        # --- Ensure predictions length matches self.T ---
+        if len(ps) != self.T:
+            print(f"[warn] Length mismatch: labels={self.T}, preds={len(ps)} → clipping/padding")
+            if len(ps) > self.T:
+                ps = ps[:self.T]
+            else:
+                padded = np.array([None] * self.T, dtype=object)
+                padded[:len(ps)] = ps
+                ps = padded
+
+        swim = (self.labels == 1)
+        out = np.array([None] * self.T, dtype=object)
         m = swim & (ps != None)  # noqa: E711
         out[m] = ps[m]
         self.strokes = out
         self.changed = True
+
 
     def _save_labels(self):
         path = self._human_label_path(self.idx)
