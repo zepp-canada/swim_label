@@ -91,7 +91,7 @@ from data_io import get_session_data
 
 # ---------------------- Config ----------------------
 
-DATA_ROOT = "data/all_train_clean"
+DATA_ROOT = "/Users/subhrajyoti/Downloads/Zepp/swim/data/csv/all_train_clean"
 FS = 25.0
 SCROLL_ZOOM_FACTOR = 1.2
 HUMAN_LABEL_FILE = "human_label.csv"
@@ -1056,5 +1056,11 @@ class LabelGUI:
 
 if __name__ == "__main__":
     # Case-insensitive substring match on folder names (e.g., "Mixed" or "mixed")
-    FILTER_KEYWORDS = ["mixed"]
+    # FILTER_KEYWORDS = ["mixed"]
+    FILTER_KEYWORDS = [
+        "03_2018-07-27_17-25-01(P25_Mixed_Lap72)",
+        "02_2018-11-07_14-37-01(P50_Mixed_Lap28)",
+        "01_2018-11-05_15-42-58(P50_Mixed_Lap18)",
+        "01_2018-06-25_12-41-50(P25_Mixed_Lap38)",
+    ]
     LabelGUI(DATA_ROOT, fs=FS, filter_keywords=FILTER_KEYWORDS)
